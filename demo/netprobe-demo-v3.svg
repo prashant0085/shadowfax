@@ -47,10 +47,10 @@
   <text class="muted line l8" x="28" y="475">SUMMARY: 8 OK | 0 NO ICMP | 0 LOSS</text>
   <circle class="green pulse" cx="855" cy="475" r="5"/>
 
-  <text class="cyan line l8" x="28" y="525">$ netprobe --http https://api.kite.trade</text>
-  <text class="text line l8" x="28" y="549">HTTP 200   DNS 2.1ms   TCP 8.4ms   TLS 14.2ms   TTFB 31.7ms</text>
-  <text class="cyan line l8" x="28" y="581">$ netprobe --tcp api.kite.trade:443</text>
-  <text class="green line l8" x="28" y="605">TCP connectivity: OPEN / reachable</text>
-  <text class="cyan line l8" x="28" y="637">$ netprobe --dns api.kite.trade --json</text>
-  <text class="text line l8" x="28" y="661">system  4.8ms     1.1.1.1  3.2ms     8.8.8.8  6.1ms</text>
+  <text class="cyan" x="28" y="525">$ netprobe --http https://api.kite.trade</text>
+  <text class="text" x="28" y="549">HTTP 200   DNS 2.1ms   TCP 8.4ms   TLS 14.2ms   TTFB 31.7ms</text>
+  <text class="cyan" x="28" y="581">$ netprobe --tcp api.kite.trade:443</text>
+  <text class="green" x="28" y="605">TCP connectivity: OPEN / reachable</text>
+  <text class="cyan" x="28" y="637">$ netprobe --dns api.kite.trade --json</text>
+  <text class="text" x="28" y="661">system  4.8ms     1.1.1.1  3.2ms     8.8.8.8  6.1ms</text>
 </svg>

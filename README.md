@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="demo/netprobe-demo-v2.svg" alt="Animated netprobe terminal demo" width="900">
+  <img src="demo/netprobe-demo-v3.svg" alt="Animated netprobe terminal demo" width="900">
 </p>
 
 `netprobe` began as a small parallel `ping` dashboard for comparing a home router, public DNS providers, market-data endpoints, and arbitrary hosts. It is growing into a practical toolkit for developers, homelab operators, SREs, and authorized security testers.
