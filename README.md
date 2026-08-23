@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="demo/netprobe-demo.svg" alt="Animated netprobe terminal demo" width="900">
+  <img src="demo/netprobe-demo-v2.svg" alt="Animated netprobe terminal demo" width="900">
 </p>
 
 `netprobe` began as a small parallel `ping` dashboard for comparing a home router, public DNS providers, market-data endpoints, and arbitrary hosts. It is growing into a practical toolkit for developers, homelab operators, SREs, and authorized security testers.
@@ -179,6 +179,10 @@ Use discovery, TCP checks, and security diagnostics only on systems and networks
 ## Project status
 
 `netprobe` is actively evolving. Ideas and contributions are welcome as the command surface becomes more portable and the output becomes easier to integrate with monitoring systems.
+
+### TODO
+
+- Replace the illustrative animated SVG with a recorded terminal demo, preferably an animated GIF or equivalent terminal recording similar to the demo used by [`kube-ps1`](https://github.com/jonmosco/kube-ps1).
 
 ## License
 
