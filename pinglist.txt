@@ -1,0 +1,10 @@
+google.com
+cloudflare.com
+github.com
+amazon.com
+microsoft.com
+www.nseindia.com
+www.bseindia.com
+api.kite.trade
+api.upstox.com
+api.angelone.in

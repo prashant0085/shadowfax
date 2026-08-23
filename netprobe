@@ -1,0 +1,597 @@
+#!/usr/bin/env bash
+
+# Check ICMP latency to useful trading/network endpoints.
+# Usage: netprobe [-f endpoint-file] [-n count]
+
+set -u
+ORIGINAL_ARGS=("$@")
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_CYAN=$'\033[36m'
+else
+  C_RESET=""; C_BOLD=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""
+fi
+
+COUNT="${PING_COUNT:-5}"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/network-latency.XXXXXX")"
+trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
+
+usage() {
+  printf '%s\n' \
+    "Usage: netprobe [-f endpoint-file] [-n ping-count] [-i|--interactive]" \
+    "" \
+    "  -f FILE   Add one hostname or IP per line from FILE" \
+    "  -n COUNT  Number of pings per endpoint (default: 5)" \
+    "  -i        Show a live fzf dashboard while probes run" \
+    "  --tcp H:P Check TCP connectivity to host and port" \
+    "  --http URL Measure DNS, TCP, TLS, TTFB, and total HTTP timing" \
+    "  --dns HOST Benchmark DNS resolution timing" \
+    "  --trace HOST Run traceroute/traceroute6" \
+    "  --mtu HOST Find a working packet size" \
+    "  --speed   Run the platform internet speed test when available" \
+    "  --discover CIDR Discover responsive hosts on an authorized LAN" \
+    "  --info    Show local interface, gateway, DNS, and public IP details" \
+    "  --security URL Show HTTP security headers and TLS certificate dates" \
+    "  --watch SEC Repeat the default probe dashboard" \
+    "  --max-avg MS Fail if any average latency exceeds MS" \
+    "  --max-loss PCT Fail if any packet loss exceeds PCT" \
+    "  --json    Emit machine-readable JSON results" \
+    "  --csv     Emit CSV results" \
+    "  -4/-6     Force IPv4/IPv6 for ping" \
+    "  -h        Show this help message"
+}
+
+ENDPOINT_FILE=""
+INTERACTIVE=0
+TCP_TARGET=""
+HTTP_TARGET=""
+DNS_TARGET=""
+TRACE_TARGET=""
+MTU_TARGET=""
+DISCOVER_CIDR=""
+SECURITY_TARGET=""
+RUN_SPEED=0
+RUN_INFO=0
+WATCH_SECONDS=0
+MAX_AVG=""
+MAX_LOSS=""
+OUTPUT_FORMAT="table"
+PING_FAMILY=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -f|--file)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a file path." >&2
+        usage >&2
+        exit 2
+      fi
+      ENDPOINT_FILE="$2"
+      shift 2
+      ;;
+    -n|--count)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a positive number." >&2
+        usage >&2
+        exit 2
+      fi
+      COUNT="$2"
+      shift 2
+      ;;
+    -i|--interactive)
+      INTERACTIVE=1
+      shift
+      ;;
+    --tcp)
+      [ "$#" -ge 2 ] || { echo "Error: --tcp requires HOST:PORT." >&2; exit 2; }
+      TCP_TARGET="$2"; shift 2 ;;
+    --http)
+      [ "$#" -ge 2 ] || { echo "Error: --http requires a URL." >&2; exit 2; }
+      HTTP_TARGET="$2"; shift 2 ;;
+    --dns)
+      [ "$#" -ge 2 ] || { echo "Error: --dns requires a hostname." >&2; exit 2; }
+      DNS_TARGET="$2"; shift 2 ;;
+    --trace)
+      [ "$#" -ge 2 ] || { echo "Error: --trace requires a hostname or IP." >&2; exit 2; }
+      TRACE_TARGET="$2"; shift 2 ;;
+    --mtu)
+      [ "$#" -ge 2 ] || { echo "Error: --mtu requires a hostname or IP." >&2; exit 2; }
+      MTU_TARGET="$2"; shift 2 ;;
+    --discover)
+      [ "$#" -ge 2 ] || { echo "Error: --discover requires a CIDR, for example 192.168.1.0/24." >&2; exit 2; }
+      DISCOVER_CIDR="$2"; shift 2 ;;
+    --security)
+      [ "$#" -ge 2 ] || { echo "Error: --security requires an HTTPS URL." >&2; exit 2; }
+      SECURITY_TARGET="$2"; shift 2 ;;
+    --speed) RUN_SPEED=1; shift ;;
+    --info) RUN_INFO=1; shift ;;
+    --watch)
+      [ "$#" -ge 2 ] || { echo "Error: --watch requires seconds." >&2; exit 2; }
+      WATCH_SECONDS="$2"; shift 2 ;;
+    --max-avg)
+      [ "$#" -ge 2 ] || { echo "Error: --max-avg requires milliseconds." >&2; exit 2; }
+      MAX_AVG="$2"; shift 2 ;;
+    --max-loss)
+      [ "$#" -ge 2 ] || { echo "Error: --max-loss requires a percentage." >&2; exit 2; }
+      MAX_LOSS="$2"; shift 2 ;;
+    --json) OUTPUT_FORMAT="json"; shift ;;
+    --csv) OUTPUT_FORMAT="csv"; shift ;;
+    -4) PING_FAMILY="-4"; shift ;;
+    -6) PING_FAMILY="-6"; shift ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$COUNT" in
+  ''|*[!0-9]*)
+    echo "Error: ping count must be a positive integer: $COUNT" >&2
+    exit 2
+    ;;
+esac
+if [ "$COUNT" -lt 1 ]; then
+  echo "Error: ping count must be greater than zero." >&2
+  exit 2
+fi
+
+case "$WATCH_SECONDS" in
+  ''|*[!0-9]*) [ "$WATCH_SECONDS" = "0" ] || { echo "Error: --watch requires positive seconds." >&2; exit 2; } ;;
+esac
+if [ "$WATCH_SECONDS" -lt 0 ]; then
+  echo "Error: --watch requires positive seconds." >&2
+  exit 2
+fi
+if [ -n "$MAX_AVG" ] && ! printf '%s' "$MAX_AVG" | awk '{exit !($1 >= 0)}'; then
+  echo "Error: --max-avg must be a non-negative number." >&2
+  exit 2
+fi
+if [ -n "$MAX_LOSS" ] && ! printf '%s' "$MAX_LOSS" | awk '{exit !($1 >= 0 && $1 <= 100)}'; then
+  echo "Error: --max-loss must be between 0 and 100." >&2
+  exit 2
+fi
+
+if [ "$INTERACTIVE" -eq 1 ] && ! command -v fzf >/dev/null 2>&1; then
+  echo "Error: -i/--interactive requires fzf, but fzf is not installed." >&2
+  echo "Install fzf: https://github.com/junegunn/fzf/tree/master#installation" >&2
+  exit 1
+fi
+
+if ! command -v ping >/dev/null 2>&1; then
+  echo "Error: ping command was not found." >&2
+  exit 1
+fi
+
+run_tcp_check() {
+  target="$1"
+  host="${target%:*}"
+  port="${target##*:}"
+  if [ "$host" = "$target" ] || [ -z "$host" ] || [ -z "$port" ]; then
+    echo "Usage: netprobe --tcp HOST:PORT" >&2
+    exit 2
+  fi
+  if ! command -v nc >/dev/null 2>&1; then
+    echo "Error: --tcp requires nc (netcat)." >&2
+    exit 1
+  fi
+  printf 'TCP connectivity: %s:%s\n' "$host" "$port"
+  if nc -z -w 3 "$host" "$port" >/dev/null 2>&1; then
+    echo "Status: OPEN / reachable"
+    return 0
+  fi
+  echo "Status: CLOSED / unreachable"
+  return 1
+}
+
+run_http_check() {
+  target="$1"
+  command -v curl >/dev/null 2>&1 || { echo "Error: --http requires curl." >&2; return 1; }
+  printf 'HTTP timing: %s\n' "$target"
+  curl -sS -o /dev/null --connect-timeout 5 \
+    -w 'HTTP=%{http_code}\nDNS=%{time_namelookup}s\nTCP=%{time_connect}s\nTLS=%{time_appconnect}s\nTTFB=%{time_starttransfer}s\nTOTAL=%{time_total}s\n' \
+    "$target"
+}
+
+run_dns_check() {
+  target="$1"
+  command -v dig >/dev/null 2>&1 || { echo "Error: --dns requires dig (dnsutils/bind-utils)." >&2; return 1; }
+  printf 'DNS timing: %s\n' "$target"
+  for server in system 1.1.1.1 8.8.8.8 9.9.9.9; do
+    if [ "$server" = "system" ]; then
+      line="$(dig +stats +noanswer "$target" 2>/dev/null | awk '/Query time:/ {print}')"
+    else
+      line="$(dig +stats +noanswer "@$server" "$target" 2>/dev/null | awk '/Query time:/ {print}')"
+    fi
+    printf '%-10s %s\n' "$server" "${line:-unavailable}"
+  done
+}
+
+run_trace() {
+  target="$1"
+  trace_cmd="traceroute"
+  [ "$PING_FAMILY" = "-6" ] && trace_cmd="traceroute6"
+  command -v "$trace_cmd" >/dev/null 2>&1 || { echo "Error: $trace_cmd is not installed." >&2; return 1; }
+  "$trace_cmd" -m 12 -w 1 "$target"
+}
+
+run_mtu() {
+  target="$1"
+  printf 'MTU probe: %s\n' "$target"
+  size=1472
+  while [ "$size" -ge 1200 ]; do
+    if [ "$(uname -s)" = "Darwin" ]; then
+      ping -D -c 1 -s "$size" "$target" >/dev/null 2>&1
+    else
+      ping -M do -c 1 -s "$size" "$target" >/dev/null 2>&1
+    fi
+    if [ "$?" -eq 0 ]; then
+      echo "Largest tested payload: $size bytes"
+      echo "Approximate path MTU: $((size + 28)) bytes"
+      return 0
+    fi
+    size=$((size - 10))
+  done
+  echo "No working payload found in the tested range." >&2
+  return 1
+}
+
+run_speed_check() {
+  if command -v networkQuality >/dev/null 2>&1; then
+    networkQuality -v
+  else
+    echo "Error: --speed currently requires Apple's networkQuality command." >&2
+    echo "On macOS it is included with recent system versions." >&2
+    return 1
+  fi
+}
+
+run_info() {
+  echo "Network interface information"
+  if command -v route >/dev/null 2>&1; then
+    printf 'Default route: '; route -n get default 2>/dev/null | awk '/interface:|gateway:|destination:/{printf "%s ", $2} END{print ""}'
+  fi
+  printf 'Local addresses:\n'
+  ifconfig 2>/dev/null | awk '/^[a-zA-Z0-9].*: flags/{iface=$1; sub(":", "", iface)} /inet /{print "  " iface " " $2} /inet6 /{print "  " iface " " $2}'
+  if command -v scutil >/dev/null 2>&1; then
+    printf 'DNS servers:\n'
+    scutil --dns 2>/dev/null | awk '/nameserver\[[0-9]+\]/{print "  " $3}' | sort -u
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    printf 'Public IPv4: '; curl -4 -fsS --max-time 4 https://api.ipify.org 2>/dev/null || echo unavailable
+    printf 'Public IPv6: '; curl -6 -fsS --max-time 4 https://api6.ipify.org 2>/dev/null || echo unavailable
+  fi
+}
+
+run_security_check() {
+  target="$1"
+  command -v curl >/dev/null 2>&1 || { echo "Error: --security requires curl." >&2; return 1; }
+  echo "HTTP security headers: $target"
+  curl -fsSI --connect-timeout 5 "$target" | awk 'BEGIN{IGNORECASE=1} /^HTTP\// || /^(strict-transport-security|content-security-policy|x-frame-options|x-content-type-options|referrer-policy|permissions-policy):/{print}'
+  url_host="${target#*://}"; url_host="${url_host%%/*}"; url_host="${url_host%%:*}"
+  if command -v openssl >/dev/null 2>&1; then
+    echo "TLS certificate dates:"
+    printf '\n' | openssl s_client -connect "$url_host:443" -servername "$url_host" 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo unavailable
+  fi
+}
+
+run_discovery() {
+  cidr="$1"
+  case "$cidr" in
+    */24) base="${cidr%.*}"; base="${base%.*}"; base="${base%.*}"; prefix="${cidr%.*}" ;;
+    *) echo "Error: --discover currently supports an IPv4 /24, for example 192.168.1.0/24." >&2; return 2 ;;
+  esac
+  echo "Discovering responsive hosts in $cidr (use only on authorized networks)"
+  for last in $(seq 1 254); do
+    host="$prefix.$last"
+    (ping -c 1 -W 1 "$host" >/dev/null 2>&1 && echo "$host") &
+  done
+  wait
+}
+
+special_mode=0
+if [ -n "$TCP_TARGET" ]; then special_mode=1; run_tcp_check "$TCP_TARGET"; exit $?; fi
+if [ -n "$HTTP_TARGET" ]; then special_mode=1; run_http_check "$HTTP_TARGET"; exit $?; fi
+if [ -n "$DNS_TARGET" ]; then special_mode=1; run_dns_check "$DNS_TARGET"; exit $?; fi
+if [ -n "$TRACE_TARGET" ]; then special_mode=1; run_trace "$TRACE_TARGET"; exit $?; fi
+if [ -n "$MTU_TARGET" ]; then special_mode=1; run_mtu "$MTU_TARGET"; exit $?; fi
+if [ "$RUN_SPEED" -eq 1 ]; then special_mode=1; run_speed_check; exit $?; fi
+if [ "$RUN_INFO" -eq 1 ]; then special_mode=1; run_info; exit $?; fi
+if [ -n "$SECURITY_TARGET" ]; then special_mode=1; run_security_check "$SECURITY_TARGET"; exit $?; fi
+if [ -n "$DISCOVER_CIDR" ]; then special_mode=1; run_discovery "$DISCOVER_CIDR"; exit $?; fi
+
+# Defaults: local router, Google, Cloudflare, NSE, and Zerodha/Kite.
+TARGETS="Router|192.168.1.1
+Google DNS|8.8.8.8
+Cloudflare DNS|1.1.1.1
+NSE|www.nseindia.com
+Zerodha Kite API|api.kite.trade"
+
+if [ -n "$ENDPOINT_FILE" ]; then
+  if [ ! -f "$ENDPOINT_FILE" ]; then
+    echo "Error: endpoint file not found: $ENDPOINT_FILE" >&2
+    exit 2
+  fi
+
+  while IFS= read -r endpoint || [ -n "$endpoint" ]; do
+    # Ignore blank lines and lines beginning with '#'.
+    endpoint="$(printf '%s' "$endpoint" | sed 's/[[:space:]]*#.*$//' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -z "$endpoint" ] && continue
+    TARGETS="$TARGETS
+Custom|$endpoint"
+  done < "$ENDPOINT_FILE"
+fi
+
+ping_target() {
+  index="$1"
+  label="$2"
+  host="$3"
+  output="$TMP_DIR/$index.out"
+  result="$TMP_DIR/$index.result"
+
+  # macOS uses milliseconds for -W; Linux uses seconds.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    ping -q -c "$COUNT" -W 1000 ${PING_FAMILY:+$PING_FAMILY} "$host" >"$output" 2>&1
+  else
+    ping -q -c "$COUNT" -W 1 ${PING_FAMILY:+$PING_FAMILY} "$host" >"$output" 2>&1
+  fi
+
+  packet_line="$(grep -m 1 'packet loss' "$output" || true)"
+  timing_line="$(grep -E -m 1 'round-trip|rtt ' "$output" || true)"
+
+  if [ -n "$packet_line" ]; then
+    sent="$(printf '%s\n' "$packet_line" | awk -F',' '{print $1}' | awk '{print $1}')"
+    received="$(printf '%s\n' "$packet_line" | awk -F',' '{print $2}' | awk '{print $1}')"
+    loss="$(printf '%s\n' "$packet_line" | awk -F',' '{print $3}' | awk '{print $1}' | tr -d '%')"
+  else
+    sent="-"; received="-"; loss="-"
+  fi
+
+  min="-"; avg="-"; max="-"; jitter="-"
+  if [ -n "$timing_line" ]; then
+    values="${timing_line#*= }"
+    values="${values% ms}"
+    IFS=/ read -r min avg max jitter <<< "$values"
+  fi
+
+  if [ "$loss" = "0.0" ] || [ "$loss" = "0" ]; then
+    status="OK"
+  elif [ "$loss" = "-" ]; then
+    status="ERROR"
+  elif [ "$received" = "0" ]; then
+    status="NO ICMP"
+  else
+    status="LOSS"
+  fi
+
+  if [ "$loss" = "-" ]; then
+    loss_display="-"
+  else
+    loss_display="${loss}%"
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$label" "$host" "$sent" "$received" "$loss_display" "$min" "$avg" "$max" "$jitter" > "$result"
+  printf '%s\n' "$status" >> "$result"
+}
+
+render_interactive() {
+  view_tmp="$TMP_DIR/view.tmp"
+  view="$TMP_DIR/view"
+  {
+    printf '%s\n' "  NETPROBE  |  live ICMP latency dashboard"
+    printf '%s\n' "  ESC or q to close  |  probes run in parallel"
+    printf '%s\n' ""
+    i=0
+    while [ "$i" -lt "$index" ]; do
+      result="$TMP_DIR/$i.result"
+      target="$TMP_DIR/$i.target"
+      if [ -f "$result" ]; then
+        data="$(head -n 1 "$result")"
+        status="$(tail -n 1 "$result")"
+        IFS=$'\t' read -r view_label view_host sent received loss min avg max jitter <<< "$data"
+        case "$status" in
+          OK) view_status="${C_GREEN}OK${C_RESET}" ;;
+          NO\ ICMP) view_status="${C_YELLOW}NO ICMP${C_RESET}" ;;
+          *) view_status="${C_RED}${status}${C_RESET}" ;;
+        esac
+        printf '  %-20s %-24s %8s  avg %8s ms  loss %7s  %s\n' \
+          "$view_label" "$view_host" "$sent/$received" "$avg" "$loss" "$view_status"
+      else
+        IFS=$'\t' read -r view_label view_host < "$target"
+        printf '  %-20s %-24s %8s  %-16s  %-12s  %s\n' \
+          "$view_label" "$view_host" "-/-" "waiting" "pending" "${C_CYAN}PINGING${C_RESET}"
+      fi
+      i=$((i + 1))
+    done
+  } > "$view_tmp"
+  mv "$view_tmp" "$view"
+}
+
+index=0
+printf '\n%s\n' "${C_CYAN}Probing endpoints in parallel...${C_RESET}"
+while IFS='|' read -r label host; do
+  [ -z "$host" ] && continue
+  printf '%s\t%s\n' "$label" "$host" > "$TMP_DIR/$index.target"
+  printf '  queued: %-20s %-24s\n' "$label" "$host"
+  ping_target "$index" "$label" "$host" &
+  index=$((index + 1))
+done <<EOF
+$TARGETS
+EOF
+
+if [ "$INTERACTIVE" -eq 1 ]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: -i/--interactive requires curl." >&2
+    exit 1
+  fi
+
+  render_interactive
+  FZF_SOCKET="$TMP_DIR/fzf.sock"
+  fzf --ansi --disabled --no-multi --layout=reverse-list --border=rounded \
+    --header-lines=3 --header-border=bottom --prompt='' \
+    --listen="$FZF_SOCKET" < "$TMP_DIR/view" &
+  fzf_pid=$!
+
+  while [ ! -S "$FZF_SOCKET" ] && kill -0 "$fzf_pid" 2>/dev/null; do
+    sleep 0.05
+  done
+
+  while kill -0 "$fzf_pid" 2>/dev/null; do
+    completed=0
+    i=0
+    while [ "$i" -lt "$index" ]; do
+      [ -f "$TMP_DIR/$i.result" ] && completed=$((completed + 1))
+      i=$((i + 1))
+    done
+    render_interactive
+    curl -sS --unix-socket "$FZF_SOCKET" -X POST \
+      --data "reload(cat $TMP_DIR/view)" http://localhost >/dev/null 2>&1 || true
+    [ "$completed" -ge "$index" ] && break
+    sleep 0.15
+  done
+  render_interactive
+  curl -sS --unix-socket "$FZF_SOCKET" -X POST \
+    --data "reload(cat $TMP_DIR/view)" http://localhost >/dev/null 2>&1 || true
+  if kill -0 "$fzf_pid" 2>/dev/null; then
+    wait "$fzf_pid" 2>/dev/null || true
+  fi
+else
+  # Report each completed probe while the other background probes continue.
+  completed=0
+  printf '\n%s\n' "${C_CYAN}Probing endpoints in parallel...${C_RESET}"
+  while [ "$completed" -lt "$index" ]; do
+    i=0
+    while [ "$i" -lt "$index" ]; do
+      result="$TMP_DIR/$i.result"
+      reported="$TMP_DIR/$i.reported"
+      if [ -f "$result" ] && [ ! -f "$reported" ]; then
+        data="$(head -n 1 "$result")"
+        status="$(tail -n 1 "$result")"
+        IFS=$'\t' read -r progress_label progress_host _ <<< "$data"
+        case "$status" in
+          OK) progress_status="${C_GREEN}OK${C_RESET}" ;;
+          NO\ ICMP) progress_status="${C_YELLOW}NO ICMP${C_RESET}" ;;
+          *) progress_status="${C_RED}${status}${C_RESET}" ;;
+        esac
+        completed=$((completed + 1))
+        printf '  [%02d/%02d] %-20s %-24s %s\n' \
+          "$completed" "$index" "$progress_label" "$progress_host" "$progress_status"
+        : > "$reported"
+      fi
+      i=$((i + 1))
+    done
+    if [ "$completed" -lt "$index" ]; then
+      sleep 0.1
+    fi
+  done
+  wait
+fi
+
+# Dashboard-style report, inspired by tools such as nvidia-smi.
+line='+----------------------+--------------------------+----------+---------+----------+----------+----------+----------+-----------+'
+printf '\n%s\n' "$line"
+printf '| %s%-20s%s | %s%-24s%s |\n' "$C_BOLD" "NETPROBE" "$C_RESET" "$C_CYAN" "ICMP LATENCY DASHBOARD" "$C_RESET"
+printf '| %-20s | %-24s |\n' "$(date '+%H:%M:%S %Z')" "${COUNT} packets per target"
+printf '%s\n' "$line"
+printf '| %-20s | %-24s | %8s | %7s | %8s | %8s | %8s | %8s | %-9s |\n' \
+  'NAME' 'ENDPOINT' 'SENT/RECV' 'LOSS' 'MIN ms' 'AVG ms' 'MAX ms' 'JITTER' 'STATUS'
+printf '%s\n' "$line"
+
+ok_count=0
+loss_count=0
+no_icmp_count=0
+error_count=0
+threshold_failed=0
+i=0
+while [ "$i" -lt "$index" ]; do
+  result="$TMP_DIR/$i.result"
+  data="$(head -n 1 "$result")"
+  status="$(tail -n 1 "$result")"
+  IFS=$'\t' read -r label host sent received loss min avg max jitter <<< "$data"
+
+  case "$status" in
+    OK)
+      status_color="$C_GREEN"
+      ok_count=$((ok_count + 1))
+      ;;
+    NO\ ICMP)
+      status_color="$C_YELLOW"
+      no_icmp_count=$((no_icmp_count + 1))
+      ;;
+    LOSS)
+      status_color="$C_RED"
+      loss_count=$((loss_count + 1))
+      ;;
+    *)
+      status_color="$C_RED"
+      error_count=$((error_count + 1))
+      ;;
+  esac
+
+  if [ -n "$MAX_AVG" ] && [ "$avg" != "-" ] && awk -v actual="$avg" -v limit="$MAX_AVG" 'BEGIN {exit !(actual > limit)}'; then
+    threshold_failed=1
+  fi
+  loss_value="${loss%%%}"
+  if [ -n "$MAX_LOSS" ] && [ "$loss_value" != "-" ] && awk -v actual="$loss_value" -v limit="$MAX_LOSS" 'BEGIN {exit !(actual > limit)}'; then
+    threshold_failed=1
+  fi
+
+  printf '| %-20s | %-24s | %8s | %7s | %8s | %8s | %8s | %8s | ' \
+    "$label" "$host" "$sent/$received" "$loss" "$min" "$avg" "$max" "$jitter"
+  printf '%s%-9s%s |\n' "$status_color" "$status" "$C_RESET"
+  i=$((i + 1))
+done
+
+printf '%s\n' "$line"
+printf '| %sSUMMARY%s: %s%d OK%s | %s%d NO ICMP%s | %s%d LOSS%s | %s%d ERROR%s %-15s |\n' \
+  "$C_BOLD" "$C_RESET" "$C_GREEN" "$ok_count" "$C_RESET" \
+  "$C_YELLOW" "$no_icmp_count" "$C_RESET" "$C_RED" "$loss_count" "$C_RESET" "$C_RED" "$error_count" "$C_RESET" ""
+printf '| %-96s |\n' "Note: NO ICMP means the host may be healthy but does not answer ping."
+printf '%s\n' "$line"
+
+if [ "$OUTPUT_FORMAT" = "csv" ]; then
+  printf '\nname,endpoint,sent,received,loss,min_ms,avg_ms,max_ms,jitter_ms,status\n'
+  i=0
+  while [ "$i" -lt "$index" ]; do
+    data="$(head -n 1 "$TMP_DIR/$i.result")"
+    status="$(tail -n 1 "$TMP_DIR/$i.result")"
+    IFS=$'\t' read -r label host sent received loss min avg max jitter <<< "$data"
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$label" "$host" "$sent" "$received" "$loss" "$min" "$avg" "$max" "$jitter" "$status"
+    i=$((i + 1))
+  done
+elif [ "$OUTPUT_FORMAT" = "json" ]; then
+  printf '\n{"packets":%s,"targets":[' "$COUNT"
+  i=0
+  while [ "$i" -lt "$index" ]; do
+    [ "$i" -gt 0 ] && printf ','
+    data="$(head -n 1 "$TMP_DIR/$i.result")"
+    status="$(tail -n 1 "$TMP_DIR/$i.result")"
+    IFS=$'\t' read -r label host sent received loss min avg max jitter <<< "$data"
+    label_json="$(printf '%s' "$label" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    host_json="$(printf '%s' "$host" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    printf '{"name":"%s","endpoint":"%s","sent":"%s","received":"%s","loss":"%s","min_ms":"%s","avg_ms":"%s","max_ms":"%s","jitter_ms":"%s","status":"%s"}' \
+      "$label_json" "$host_json" "$sent" "$received" "$loss" "$min" "$avg" "$max" "$jitter" "$status"
+    i=$((i + 1))
+  done
+  printf ']}\n'
+fi
+
+if [ "$threshold_failed" -eq 1 ]; then
+  echo "Threshold check failed." >&2
+  exit 3
+fi
+
+if [ "$WATCH_SECONDS" -gt 0 ]; then
+  sleep "$WATCH_SECONDS"
+  exec "$0" "${ORIGINAL_ARGS[@]}"
+fi
