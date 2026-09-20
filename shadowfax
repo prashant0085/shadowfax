@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Check ICMP latency to useful trading/network endpoints.
-# Usage: netprobe [-f endpoint-file] [-n count]
+# Usage: shadowfax [-f endpoint-file] [-n count]
 
 set -u
 ORIGINAL_ARGS=("$@")
@@ -23,7 +23,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
 usage() {
   printf '%s\n' \
-    "Usage: netprobe [-f endpoint-file] [-n ping-count] [-i|--interactive]" \
+    "Usage: shadowfax [-f endpoint-file] [-n ping-count] [-i|--interactive]" \
     "" \
     "  -f FILE   Add one hostname or IP per line from FILE" \
     "  -n COUNT  Number of pings per endpoint (default: 5)" \
@@ -177,7 +177,7 @@ run_tcp_check() {
   host="${target%:*}"
   port="${target##*:}"
   if [ "$host" = "$target" ] || [ -z "$host" ] || [ -z "$port" ]; then
-    echo "Usage: netprobe --tcp HOST:PORT" >&2
+    echo "Usage: shadowfax --tcp HOST:PORT" >&2
     exit 2
   fi
   if ! command -v nc >/dev/null 2>&1; then
@@ -388,7 +388,7 @@ render_interactive() {
   view_tmp="$TMP_DIR/view.tmp"
   view="$TMP_DIR/view"
   {
-    printf '%s\n' "  NETPROBE  |  live ICMP latency dashboard"
+    printf '%s\n' "  SHADOWFAX  |  live ICMP latency dashboard"
     printf '%s\n' "  ESC or q to close  |  probes run in parallel"
     printf '%s\n' ""
     i=0
@@ -500,7 +500,7 @@ fi
 # Dashboard-style report, inspired by tools such as nvidia-smi.
 line='+----------------------+--------------------------+----------+---------+----------+----------+----------+----------+-----------+'
 printf '\n%s\n' "$line"
-printf '| %s%-20s%s | %s%-24s%s |\n' "$C_BOLD" "NETPROBE" "$C_RESET" "$C_CYAN" "ICMP LATENCY DASHBOARD" "$C_RESET"
+printf '| %s%-20s%s | %s%-24s%s |\n' "$C_BOLD" "SHADOWFAX" "$C_RESET" "$C_CYAN" "ICMP LATENCY DASHBOARD" "$C_RESET"
 printf '| %-20s | %-24s |\n' "$(date '+%H:%M:%S %Z')" "${COUNT} packets per target"
 printf '%s\n' "$line"
 printf '| %-20s | %-24s | %8s | %7s | %8s | %8s | %8s | %8s | %-9s |\n' \

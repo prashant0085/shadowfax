@@ -1,4 +1,4 @@
-# netprobe
+# shadowfax
 
 <p align="center">
   <strong>Understand your network path, one probe at a time.</strong><br>
@@ -6,15 +6,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/prashant0085/netprobe/stargazers"><img src="https://img.shields.io/github/stars/prashant0085/netprobe?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/prashant0085/shadowfax/stargazers"><img src="https://img.shields.io/github/stars/prashant0085/shadowfax?style=flat-square" alt="GitHub stars"></a>
   <img src="https://img.shields.io/badge/shell-bash-121011?style=flat-square&logo=gnu-bash&logoColor=white" alt="Bash">
 </p>
 
 <p align="center">
-  <img src="demo/netprobe-demo-v3.svg" alt="Animated netprobe terminal demo" width="900">
+  <img src="demo/shadowfax-demo-v1.svg" alt="Animated shadowfax terminal demo" width="900">
 </p>
 
-`netprobe` began as a small parallel `ping` dashboard for comparing a home router, public DNS providers, market-data endpoints, and arbitrary hosts. It is growing into a practical toolkit for developers, homelab operators, SREs, and authorized security testers.
+`shadowfax` began as a small parallel `ping` dashboard for comparing a home router, public DNS providers, market-data endpoints, and arbitrary hosts. It is growing into a practical toolkit for developers, homelab operators, SREs, and authorized security testers.
 
 ## Highlights
 
@@ -34,13 +34,13 @@
 Install the latest version into `~/.local/bin` without `sudo`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/prashant0085/netprobe/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/prashant0085/shadowfax/main/install.sh | bash
 ```
 
 Then run:
 
 ```bash
-netprobe
+shadowfax
 ```
 
 If `~/.local/bin` is not in your `PATH`:
@@ -52,19 +52,19 @@ export PATH="$HOME/.local/bin:$PATH"
 ### Review before installing
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/prashant0085/netprobe/main/install.sh -o /tmp/netprobe-install.sh
-less /tmp/netprobe-install.sh
-bash /tmp/netprobe-install.sh
+curl -fsSL https://raw.githubusercontent.com/prashant0085/shadowfax/main/install.sh -o /tmp/shadowfax-install.sh
+less /tmp/shadowfax-install.sh
+bash /tmp/shadowfax-install.sh
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/prashant0085/netprobe.git
-cd netprobe
+git clone https://github.com/prashant0085/shadowfax.git
+cd shadowfax
 mkdir -p ~/.local/bin
-cp netprobe ~/.local/bin/netprobe
-chmod +x ~/.local/bin/netprobe
+cp shadowfax ~/.local/bin/shadowfax
+chmod +x ~/.local/bin/shadowfax
 ```
 
 ## Quick start
@@ -72,19 +72,19 @@ chmod +x ~/.local/bin/netprobe
 Run the built-in checks:
 
 ```bash
-netprobe
+shadowfax
 ```
 
 Test endpoints from a file, with ten probes per endpoint:
 
 ```bash
-netprobe -f pinglist.txt -n 10
+shadowfax -f pinglist.txt -n 10
 ```
 
 Open the live interactive dashboard:
 
 ```bash
-netprobe -i -f pinglist.txt -n 10
+shadowfax -i -f pinglist.txt -n 10
 ```
 
 Use `q` or `Esc` to close the interactive view. Interactive mode requires [`fzf`](https://github.com/junegunn/fzf#installation).
@@ -94,10 +94,10 @@ Use `q` or `Esc` to close the interactive view. Interactive mode requires [`fzf`
 ### Trading and API latency
 
 ```bash
-netprobe --http https://api.kite.trade
-netprobe --tcp api.kite.trade:443
-netprobe --dns api.kite.trade
-netprobe --trace api.kite.trade
+shadowfax --http https://api.kite.trade
+shadowfax --tcp api.kite.trade:443
+shadowfax --dns api.kite.trade
+shadowfax --trace api.kite.trade
 ```
 
 ICMP measures the network path. HTTP timing measures what an API client actually experiences:
@@ -109,11 +109,11 @@ DNS -> TCP -> TLS -> time to first byte -> total request time
 ### Homelab diagnostics
 
 ```bash
-netprobe --info
-netprobe --discover 192.168.1.0/24
-netprobe --mtu 192.168.1.1
-netprobe -4
-netprobe -6
+shadowfax --info
+shadowfax --discover 192.168.1.0/24
+shadowfax --mtu 192.168.1.1
+shadowfax -4
+shadowfax -6
 ```
 
 ### Monitoring and automation
@@ -121,28 +121,28 @@ netprobe -6
 Refresh every five seconds:
 
 ```bash
-netprobe --watch 5
+shadowfax --watch 5
 ```
 
 Return exit code `3` if thresholds are exceeded:
 
 ```bash
-netprobe -f pinglist.txt -n 10 --max-avg 50 --max-loss 2
+shadowfax -f pinglist.txt -n 10 --max-avg 50 --max-loss 2
 ```
 
 Export results:
 
 ```bash
-netprobe -f pinglist.txt -n 10 --csv
-netprobe -f pinglist.txt -n 10 --json
+shadowfax -f pinglist.txt -n 10 --csv
+shadowfax -f pinglist.txt -n 10 --json
 ```
 
 ### Other diagnostics
 
 ```bash
-netprobe --speed
-netprobe --security https://example.com
-netprobe --help
+shadowfax --speed
+shadowfax --security https://example.com
+shadowfax --help
 ```
 
 ## Endpoint files
@@ -174,11 +174,11 @@ Missing optional dependencies are reported only when their corresponding mode is
 
 ## Responsible use
 
-Use discovery, TCP checks, and security diagnostics only on systems and networks you own or are explicitly authorized to test. `netprobe` is intended for diagnostics and defensive administration; it does not bypass authentication or exploit services.
+Use discovery, TCP checks, and security diagnostics only on systems and networks you own or are explicitly authorized to test. `shadowfax` is intended for diagnostics and defensive administration; it does not bypass authentication or exploit services.
 
 ## Project status
 
-`netprobe` is actively evolving. Ideas and contributions are welcome as the command surface becomes more portable and the output becomes easier to integrate with monitoring systems.
+`shadowfax` is actively evolving. Ideas and contributions are welcome as the command surface becomes more portable and the output becomes easier to integrate with monitoring systems.
 
 ### TODO
 
